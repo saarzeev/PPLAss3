@@ -5,11 +5,13 @@ import pandas as pd
 import numpy as np
 from bs4 import BeautifulSoup
 from nltk.tokenize import WordPunctTokenizer
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.feature_extraction.text import CountVectorizer,TfidfTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_validate
-from sklearn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline,FeatureUnion
+from sklearn.preprocessing import FunctionTransformer,KBinsDiscretizer,OneHotEncoder
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
 # import time
 
 
@@ -214,6 +216,231 @@ def load_dict_contractions():
         "luv": "love",
         "sux": "sucks"
     }
+
+def try_model_1():
+    pipeline = Pipeline([
+        ('vect', CountVectorizer(stop_words=None, max_df=0.5, max_features=10000, ngram_range=(1, 2),
+                                 preprocessor=tweet_cleaner)),
+        ('tfidf', TfidfTransformer(use_idf=True, norm='l2')),
+    ])
+
+    pipeline.steps.append(('clf', LogisticRegression(C=1.623776739188721, solver='liblinear', penalty='l2')))
+    scores = cross_validate(pipeline, X, y, cv=10, scoring=['accuracy', 'precision', 'recall'])
+    print('LogisticRegression')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', DecisionTreeClassifier(min_samples_split=5)))
+    scores = cross_validate(pipeline, X, y, cv=10, scoring=['accuracy', 'precision', 'recall'])
+    print('DecisionTreeClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', KNeighborsClassifier()))
+    scores = cross_validate(pipeline, X, y, cv=10, scoring=['accuracy', 'precision', 'recall'])
+    print('KNeighborsClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+
+def try_model_2():
+    df_modified = df.copy()
+    df_modified['SentimentText'] = pd.Series(data=[tweet_cleaner(x) for x in df['SentimentText'].values])
+    df_modified['length'] = df_modified['SentimentText'].str.len()
+
+    def get_bins(X):
+        return np.transpose(np.array([X['length'].values]))
+
+    def getSentimentText(X):
+        return X['SentimentText'].values
+
+    pipeline = Pipeline(
+        [
+            ('fetures',
+             FeatureUnion(
+                 [
+                     ('later',
+                      Pipeline(
+                          [
+                              ('Sentiments', FunctionTransformer(getSentimentText)),
+                              ('vect',
+                               CountVectorizer(stop_words=None, max_df=0.5, max_features=10000, ngram_range=(1, 2),
+                                               preprocessor=tweet_cleaner)),
+                              ('tfidf', TfidfTransformer(use_idf=True, norm='l2'))
+                          ]
+                      )),
+                     ('bins',
+                      Pipeline(
+                          [('selector', FunctionTransformer(get_bins)),
+                           ('bins', KBinsDiscretizer(n_bins=4))]
+                      )
+                      )
+                 ]
+             )
+             )
+        ]
+    )
+
+    pipeline.steps.append(('clf', LogisticRegression(C=1.623776739188721, solver='liblinear', penalty='l2')))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'length']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('LogisticRegression')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', DecisionTreeClassifier(min_samples_split=5)))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'length']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('DecisionTreeClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', KNeighborsClassifier()))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'length']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('KNeighborsClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+
+def try_model_3():
+    df_modified = df.copy()
+    count_upper = lambda message: sum(1 for c in message if c.isupper())
+    df_modified['capital'] = df.SentimentText.map(count_upper)
+    df_modified['bin_capital'] = pd.qcut(df_modified['capital'], 4, labels=[1, 2, 3, 4])
+
+    def get_bins(X):
+        return np.transpose(np.array([X['capital'].values]))
+
+    def getSentimentText(X):
+        return X['SentimentText'].values
+
+    pipeline = Pipeline(
+        [
+            ('fetures',
+             FeatureUnion(
+                 [
+                     ('later',
+                      Pipeline(
+                          [
+                              ('Sentiments', FunctionTransformer(getSentimentText)),
+                              ('vect',
+                               CountVectorizer(stop_words=None, max_df=0.5, max_features=10000, ngram_range=(1, 2),
+                                               preprocessor=tweet_cleaner)),
+                              ('tfidf', TfidfTransformer(use_idf=True, norm='l2'))
+                          ]
+                      )),
+                     ('bins',
+                      Pipeline(
+                          [('selector', FunctionTransformer(get_bins)),
+                           ('bins', KBinsDiscretizer(n_bins=3))]
+                      )
+                      )
+                 ]
+             )
+             )
+        ]
+    )
+
+    pipeline.steps.append(('clf', LogisticRegression(C=1.623776739188721, solver='liblinear', penalty='l2')))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'capital']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('LogisticRegression')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', DecisionTreeClassifier(min_samples_split=5)))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'capital']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('DecisionTreeClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', KNeighborsClassifier()))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'capital']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('KNeighborsClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+
+def try_model_4():
+    def get_multiple(message):
+        count = 0
+        for i in range(len(message) - 1):
+            if message[i] == message[i + 1]:
+                count += 1
+
+        return (float(count) + 1) / (float(len(message)) + 1)
+
+    df_modified = df.copy()
+    df_modified['multiple'] = df_modified.SentimentText.map(get_multiple)
+
+    def get_bins(X):
+        return np.transpose(np.array([X['multiple'].values]))
+
+    def getSentimentText(X):
+        return X['SentimentText'].values
+
+    pipeline = Pipeline(
+        [
+            ('fetures',
+             FeatureUnion(
+                 [
+                     ('later',
+                      Pipeline(
+                          [
+                              ('Sentiments', FunctionTransformer(getSentimentText)),
+                              ('vect',
+                               CountVectorizer(stop_words=None, max_df=0.5, max_features=10000, ngram_range=(1, 2),
+                                               preprocessor=tweet_cleaner)),
+                              ('tfidf', TfidfTransformer(use_idf=True, norm='l2'))
+                          ]
+                      )),
+                     ('bins',
+                      Pipeline(
+                          [('selector', FunctionTransformer(get_bins)),
+                           ('bins', KBinsDiscretizer(n_bins=4))]
+                      )
+                      )
+                 ]
+             )
+             )
+        ]
+    )
+    pipeline.steps.append(('clf', LogisticRegression(C=1.623776739188721, solver='liblinear', penalty='l2')))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'multiple']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('LogisticRegression')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', DecisionTreeClassifier(min_samples_split=5)))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'multiple']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('DecisionTreeClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
+    pipeline.steps.append(('clf', KNeighborsClassifier()))
+    scores = cross_validate(pipeline, df_modified[['SentimentText', 'multiple']], y, cv=10,
+                            scoring=['accuracy', 'precision', 'recall'])
+    print('KNeighborsClassifier')
+    print('accuracy %s average %f' % (scores['test_accuracy'], np.average(scores['test_accuracy'])))
+    print('precision %s average %f' % (scores['test_precision'], np.average(scores['test_precision'])))
+    print('recall %s average %f' % (scores['test_recall'], np.average(scores['test_recall'])))
+    pipeline.steps.pop()
 
 
 def tweet_cleaner(text):
